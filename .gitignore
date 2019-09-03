@@ -10,3 +10,17 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+*.log
+*.idea
+*.DS_Store
+
+# Environment Variables
+.env
+
+# Ignore Vendor
+vendor
+_vendor*
+
+# Ignore go.sum
+go.sum
