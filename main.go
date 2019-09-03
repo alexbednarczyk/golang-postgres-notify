@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
+	"sync"
 
 	"github.com/alexbednarczyk/golang-postgres-notify/notifications"
 
@@ -18,7 +18,7 @@ var pool *pgxpool.Pool
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
-	signalChan := make(chan os.Signal, 1)
+	wg := sync.WaitGroup{}
 	userInputChannel := make(chan []byte, messageChannelBufferSize)
 
 	pool, err := pgxpool.Connect(context.Background(), os.Getenv("DATABASE_URL"))
@@ -28,8 +28,9 @@ func main() {
 	}
 	defer pool.Close()
 
-	go notifications.SendPostgresNotification(ctx, signalChan, userInputChannel, pool)
-	go notifications.ListenToPostgresNotifications(ctx, signalChan, pool)
+	wg.Add(2)
+	go notifications.SendPostgresNotification(ctx, &wg, userInputChannel, pool)
+	go notifications.ListenToPostgresNotifications(ctx, &wg, pool)
 
 	fmt.Println(`Type a message and press enter.
 This message should appear in any other chat instances connected to the same
@@ -41,19 +42,17 @@ Type "exit" to quit.`)
 	for scanner.Scan() {
 		msg := scanner.Text()
 		if msg == "exit" {
-			cancel()
-			return
+			break
 		}
 
 		userInputChannel <- []byte(msg)
 		if err := scanner.Err(); err != nil {
 			fmt.Fprintln(os.Stderr, "Error scanning from stdin:", err)
-			return
+			break
 		}
 	}
 
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
-	sig := <-signalChan
 	cancel()
-	fmt.Printf("Exited %s. Received signal: %+v\n", "golang-postgres-notify", sig)
+	wg.Wait()
+	fmt.Printf("Exited %s.\n", "golang-postgres-notify")
 }

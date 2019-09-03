@@ -4,15 +4,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 // SendPostgresNotification sends a message from the notificationChannel to Postgres NOTIFY
-func SendPostgresNotification(ctx context.Context, signalChannel chan os.Signal, notificationChannel chan []byte, pool *pgxpool.Pool) {
+func SendPostgresNotification(ctx context.Context, wg *sync.WaitGroup, notificationChannel chan []byte, pool *pgxpool.Pool) {
+	defer wg.Done()
+
 	for {
 		select {
-		case <-signalChannel:
 		case <-ctx.Done():
 			return
 		case msg := <-notificationChannel:
@@ -26,7 +28,9 @@ func SendPostgresNotification(ctx context.Context, signalChannel chan os.Signal,
 }
 
 // ListenToPostgresNotifications reads a message from Postgres LISTEN and prints it to the terminal
-func ListenToPostgresNotifications(ctx context.Context, signalChannel chan os.Signal, pool *pgxpool.Pool) {
+func ListenToPostgresNotifications(ctx context.Context, wg *sync.WaitGroup, pool *pgxpool.Pool) {
+	defer wg.Done()
+
 	conn, err := pool.Acquire(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error acquiring connection:", err)
@@ -41,11 +45,16 @@ func ListenToPostgresNotifications(ctx context.Context, signalChannel chan os.Si
 	}
 
 	for {
-		notification, err := conn.Conn().WaitForNotification(ctx)
-		if err != nil {
+		select {
+		case <-ctx.Done():
 			return
-		}
+		default:
+			notification, err := conn.Conn().WaitForNotification(ctx)
+			if err != nil {
+				return
+			}
 
-		fmt.Println("PID:", notification.PID, "Channel:", notification.Channel, "Payload:", notification.Payload)
+			fmt.Println("PID:", notification.PID, "Channel:", notification.Channel, "Payload:", notification.Payload)
+		}
 	}
 }
